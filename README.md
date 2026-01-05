@@ -12,6 +12,8 @@
 ## Import Test Data
 
 Test data should be stored as folders under `public` directory, in the same format as in "E听说", like this (unused files are omitted):
+
+<pre>
 ├── 1
 │   ├── content2.json
 │   └── material
@@ -51,8 +53,9 @@ Test data should be stored as folders under `public` directory, in the same form
         ├── content.mp3
         ├── ques1askaudio.mp3
         └── ques2askaudio.mp3
+</pre>
 
-Then, edit the `TEST_SETS` array in `constants.ts`. Fill the array with **id**(directory name)**-name**(test title) pairs.
+Then, edit the `TEST_SETS` array in `test_config.js`. Fill the array with **id**(directory name)**-name**(test title) pairs.
 
 10 simulation tests have been uploaded to this repository as examples, except for media files (\*.mp3、\*.mp4) in order to avoid copyright issues.
 
@@ -60,9 +63,24 @@ Then, edit the `TEST_SETS` array in `constants.ts`. Fill the array with **id**(d
 
 1. Build a production version
    `npm run build`
-2. Start a HTTP web service on `dist` folder
+2. Start a HTTP web service on `dist` folder. Contents in this folder is supposed to be like this:
 
-\*: Note that testdata hot reload is not supported. Once you add/change the dataset, the webapp needs to be rebuilt.
+<pre>
+├── index.html
+├── tailwindcss.js
+├── test_config.js
+├── assets
+├── test_1
+├── test_2
+├── test_3
+├── test_4
+├── test_5
+├── test_6
+├── test_7
+├── test_8
+├── test_9
+└── test_10
+</pre>
 
 ## Acknowledgements
 

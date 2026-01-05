@@ -1,17 +1,8 @@
 import { Section } from './types';
 
-export const TEST_SETS = [
-  { id: 'test_1', name: '上海新高考模拟试题1' },
-  { id: 'test_2', name: '上海新高考模拟试题2' },
-  { id: 'test_3', name: '上海新高考模拟试题3' },
-  { id: 'test_4', name: '上海新高考模拟试题4' },
-  { id: 'test_5', name: '上海新高考模拟试题5' },
-  { id: 'test_6', name: '上海新高考模拟试题6' },
-  { id: 'test_7', name: '上海新高考模拟试题7' },
-  { id: 'test_8', name: '上海新高考模拟试题8' },
-  { id: 'test_9', name: '上海新高考模拟试题9' },
-  { id: 'test_10', name: '上海新高考模拟试题10' }
-];
+// Load TEST_SETS from the external configuration file (test_config.js)
+// This allows updating the exam list without rebuilding the app.
+export const TEST_SETS: { id: string; name: string }[] = (window as any).TEST_SETS || [];
 
 export const loadExamData = async (testFolder: string): Promise<Section[]> => {
   // Assuming testFolder is like "test_1"
@@ -135,11 +126,20 @@ export const loadExamData = async (testFolder: string): Promise<Section[]> => {
       s6q2Ans = std2.map((i: any) => i.value).join('\n');
 
       // Keywords
-      const kw1 = json.info.question?.[0]?.keywords || [];
-      s6q1Keywords = kw1.map((i:any) => i.value);
+      // Corrected logic: keywords is a string separated by '|', not an array of objects
+      const kw1Raw = json.info.question?.[0]?.keywords;
+      if (typeof kw1Raw === 'string') {
+          s6q1Keywords = kw1Raw.split('|').map((s: string) => s.trim()).filter((s: string) => s);
+      } else if (Array.isArray(kw1Raw)) {
+          s6q1Keywords = kw1Raw.map((i: any) => i.value);
+      }
 
-      const kw2 = json.info.question?.[1]?.keywords || [];
-      s6q2Keywords = kw2.map((i:any) => i.value);
+      const kw2Raw = json.info.question?.[1]?.keywords;
+      if (typeof kw2Raw === 'string') {
+          s6q2Keywords = kw2Raw.split('|').map((s: string) => s.trim()).filter((s: string) => s);
+      } else if (Array.isArray(kw2Raw)) {
+          s6q2Keywords = kw2Raw.map((i: any) => i.value);
+      }
     }
   } catch(e) { console.error(e); }
 

@@ -279,7 +279,7 @@ const App: React.FC = () => {
           Task: Summary & Q&A.
           Original Article: "${originalText}"
           Question: "${promptText}"
-          Keywords (Reference): [${keywords}]
+          Keywords (Reference Only): [${keywords}]
           
           Specific Criteria for Question ${isQ1 ? '1' : '2'}:
           ${isQ1 
@@ -696,7 +696,7 @@ const App: React.FC = () => {
                    type="password" 
                    value={apiKey} 
                    onChange={handleApiKeyChange}
-                   placeholder="sk-..."
+                   placeholder="AIza..."
                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
                  />
                  <a 
@@ -1219,7 +1219,7 @@ const App: React.FC = () => {
                    type="password" 
                    value={apiKey} 
                    onChange={handleApiKeyChange}
-                   placeholder="sk-..."
+                   placeholder="AIza..."
                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
                  />
                  <a 
