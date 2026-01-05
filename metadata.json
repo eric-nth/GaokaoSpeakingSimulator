@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Gaokao Oral Test Simulator (With AI Grading)",
+  "description": "A professional simulation platform for High School English Speaking Tests with real-time recording and waveform visualization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
