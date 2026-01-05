@@ -1,7 +1,7 @@
 {
-  "name": "copy-of-gaokao-oral-test-simulator-(with-ai-grading)",
+  "name": "gaokao-oral-test-simulator",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

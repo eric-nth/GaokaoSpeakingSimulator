@@ -14,7 +14,7 @@ const App: React.FC = () => {
   const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
-  const [modelList, setModelList] = useState<string[]>(['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']); // Defaults
+  const [modelList, setModelList] = useState<string[]>(['gemini-3-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash']); // Defaults
   const [loadingModels, setLoadingModels] = useState<boolean>(false);
   
   // Data State
