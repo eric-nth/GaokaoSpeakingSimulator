@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Mic, Clock, CheckCircle, ChevronRight, FileAudio, AlertCircle, Download, RefreshCw, Loader2, FolderOpen, BookOpen, Sparkles, BrainCircuit, Flag, Printer, Key, Save, Square, ImageIcon, FileText, Settings2, SkipForward } from 'lucide-react';
+import { Play, Mic, Clock, CheckCircle, ChevronRight, FileAudio, AlertCircle, Download, RefreshCw, Loader2, FolderOpen, BookOpen, Sparkles, BrainCircuit, Flag, Printer, Key, Save, Square, ImageIcon, FileText, Settings2, SkipForward, Wand2 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { TEST_SETS, loadExamData } from './constants';
 import { TestPhase, RecordingMap, Question, Section } from './types';
 import { Waveform } from './components/Waveform';
+import { RadarChart } from './components/RadarChart';
+import { AIEngine } from './ai-engine';
 
 const App: React.FC = () => {
   // --- State ---
@@ -17,6 +19,18 @@ const App: React.FC = () => {
   const [modelList, setModelList] = useState<string[]>(['gemini-3-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash']); // Defaults
   const [loadingModels, setLoadingModels] = useState<boolean>(false);
   
+  // AI Sim Settings
+  const [showAISimModal, setShowAISimModal] = useState<boolean>(false);
+  const [aiSimConfig, setAiSimConfig] = useState({
+    textModel: 'gemini-2.5-flash',
+    audioModel: 'gemini-2.5-flash-preview-tts',
+    imageModel: 'gemini-2.5-flash-image', // Default to nano/banana as requested
+  });
+  const [isAIExam, setIsAIExam] = useState<boolean>(false);
+  const [aiEngine, setAiEngine] = useState<AIEngine | null>(null);
+  const [generatingSection, setGeneratingSection] = useState<boolean>(false);
+  const [genRefAudioLoading, setGenRefAudioLoading] = useState<string | null>(null);
+
   // Data State
   const [examData, setExamData] = useState<Section[] | null>(null);
   const [currentTestName, setCurrentTestName] = useState<string>('');
@@ -85,10 +99,6 @@ const App: React.FC = () => {
         
         if (models.length > 0) {
           setModelList(models);
-          // If current selected model is not in list, fallback to first one or default
-          if (!models.includes(selectedModel)) {
-            // Keep user preference if possible, otherwise default to first available
-          }
         }
       }
     } catch (e) {
@@ -115,6 +125,59 @@ const App: React.FC = () => {
         fetchModels(e.target.value);
     }
   }
+
+  const startAISimulation = async () => {
+    if (!apiKey) {
+        setApiError("API Key required");
+        return;
+    }
+    setShowAISimModal(false);
+    setLoadingTest(true);
+    setCurrentTestName("AI Generated Simulation");
+    setIsAIExam(true);
+
+    // Initialize Engine
+    const engine = new AIEngine({
+        apiKey,
+        textModel: aiSimConfig.textModel,
+        audioModel: aiSimConfig.audioModel,
+        imageModel: aiSimConfig.imageModel
+    });
+    setAiEngine(engine);
+
+    // Create Skeleton Structure (similar to constants.ts but empty)
+    const skeleton: Section[] = [
+        { id: 'sec_1', title: '第一部分：朗读句子', description: '请朗读屏幕上的句子。', directionVideoUrl: '/assets/template/1.mp4', questions: [] },
+        { id: 'sec_2', title: '第二部分：朗读段落', description: '请朗读屏幕上的段落。', directionVideoUrl: '/assets/template/2.mp4', questions: [] },
+        { id: 'sec_3', title: '第三部分：情景提问', description: '根据信息进行提问。', directionVideoUrl: '/assets/template/3.mp4', questions: [] },
+        { id: 'sec_4', title: '第四部分：图片描述', description: '请描述屏幕上的图片。', directionVideoUrl: '/assets/template/4.mp4', questions: [] },
+        { id: 'sec_5', title: '第五部分：快速应答', description: '观看视频并快速回答问题。', directionVideoUrl: '/assets/template/5.mp4', questions: [] },
+        { id: 'sec_6', title: '第六部分：简述和问答', description: '阅读文本并回答相关问题。', directionVideoUrl: '/assets/template/6.mp4', questions: [] },
+    ];
+
+    setExamData(skeleton);
+    setLoadingTest(false);
+    setPhase(TestPhase.IDLE);
+  };
+
+  const handleGenerateRefAudio = async (sectionIdx: number, questionIdx: number, text: string) => {
+      if (!aiEngine || !examData) return;
+      const qId = examData[sectionIdx].questions[questionIdx].id;
+      setGenRefAudioLoading(qId);
+      
+      const audioUrl = await aiEngine.generateSpeech(text);
+      if (audioUrl) {
+          setExamData(prev => {
+              if (!prev) return null;
+              const newData = [...prev];
+              newData[sectionIdx].questions[questionIdx].answerContent = audioUrl;
+              return newData;
+          });
+      } else {
+          alert("Failed to generate audio.");
+      }
+      setGenRefAudioLoading(null);
+  };
 
   const requestPermissions = async () => {
     try {
@@ -232,8 +295,14 @@ const App: React.FC = () => {
         const imageUrl = question.mediaUrls[0];
         const startSentence = gradingContext.startSentence || "";
         
-        if (imageUrl) {
-          const imageBase64 = await urlToBase64(imageUrl);
+        if (imageUrl && !imageUrl.includes('skipped') && !imageUrl.includes('placehold')) {
+          // If it's a data URL, we need to strip prefix
+          let imageBase64 = '';
+          if (imageUrl.startsWith('data:')) {
+             imageBase64 = imageUrl.split(',')[1];
+          } else {
+             imageBase64 = await urlToBase64(imageUrl);
+          }
           parts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
         }
 
@@ -365,6 +434,31 @@ const App: React.FC = () => {
     return total.toFixed(2);
   };
 
+  const getRadarData = () => {
+    if (!gradingResults) return [];
+    
+    // 1. Pronunciation (Sec 1: q1_1, q1_2) Max 1.0
+    const pronScore = (gradingResults['q1_1']?.score || 0) + (gradingResults['q1_2']?.score || 0);
+    // 2. Fluency (Sec 2: q2_1) Max 1.0
+    const fluencyScore = (gradingResults['q2_1']?.score || 0);
+    // 3. Interaction (Sec 3 & 5: q3_1, q3_2, q5_1-4) Max 4.0
+    const interactionScore = (gradingResults['q3_1']?.score || 0) + (gradingResults['q3_2']?.score || 0)
+                           + (gradingResults['q5_1']?.score || 0) + (gradingResults['q5_2']?.score || 0)
+                           + (gradingResults['q5_3']?.score || 0) + (gradingResults['q5_4']?.score || 0);
+    // 4. Narration (Sec 4: q4_1) Max 1.5
+    const narrationScore = (gradingResults['q4_1']?.score || 0);
+    // 5. Comprehension (Sec 6: q6_1, q6_2) Max 2.5
+    const compScore = (gradingResults['q6_1']?.score || 0) + (gradingResults['q6_2']?.score || 0);
+
+    return [
+      { label: '语音语调', value: pronScore, fullMark: 1.0 },
+      { label: '流利度', value: fluencyScore, fullMark: 1.0 },
+      { label: '互动交流', value: interactionScore, fullMark: 4.0 },
+      { label: '叙事表达', value: narrationScore, fullMark: 1.5 },
+      { label: '理解思维', value: compScore, fullMark: 2.5 },
+    ];
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -373,6 +467,7 @@ const App: React.FC = () => {
   const handleSelectTest = async (testId: string) => {
     setLoadingTest(true);
     setPreloadStatus(null);
+    setIsAIExam(false);
     
     // Set Name
     const selectedTest = TEST_SETS.find(t => t.id === testId);
@@ -451,25 +546,69 @@ const App: React.FC = () => {
     startSection(0);
   };
 
-  const startSection = (sectionIndex: number) => {
+  const startSection = async (sectionIndex: number) => {
     if (!examData) return;
     setCurrentSectionIndex(sectionIndex);
     setCurrentQuestionIndex(0);
     const section = examData[sectionIndex];
+
+    // AI SIMULATION: Trigger lazy generation
+    if (isAIExam && aiEngine && section.questions.length === 0) {
+        setGeneratingSection(true);
+        // We'll run this in background, but we need to know if it finishes before video ends
+        // The generator handles the logic
+        const confirmImage = async () => {
+            return new Promise<boolean>(resolve => {
+                const result = window.confirm("AI Message: Generating the comic strip for Section 4 consumes significant resources. Do you want to proceed with image generation? (Click Cancel to skip image)");
+                resolve(result);
+            });
+        }
+
+        aiEngine.generateSectionContent(section.id, confirmImage).then(generated => {
+            if (generated && generated.questions) {
+                // Update examData with new questions
+                setExamData(prev => {
+                    if (!prev) return null;
+                    const newData = [...prev];
+                    newData[sectionIndex] = { ...newData[sectionIndex], ...generated };
+                    return newData;
+                });
+            }
+            setGeneratingSection(false);
+        }).catch(err => {
+            console.error("AI Gen Error", err);
+            alert("Failed to generate section content.");
+            setGeneratingSection(false);
+        });
+    }
+
     if (section.directionVideoUrl) {
       setPhase(TestPhase.DIRECTION);
     } else {
+      // If no direction video, wait for generation if needed
+      if (isAIExam && section.questions.length === 0) {
+         // This implies a loading state until generation finishes
+         // But usually there's a video. If not, we could implement a spinner here.
+      }
       startQuestion(sectionIndex, 0);
     }
   };
 
   const startQuestion = (sectionIdx: number, questionIdx: number) => {
     if (!examData) return;
+    const section = examData[sectionIdx];
+    
+    // Safety check: ensure questions exist (for AI mode)
+    if (section.questions.length === 0) {
+        console.warn("Questions not generated yet!");
+        return; 
+    }
+
     setCurrentSectionIndex(sectionIdx);
     setCurrentQuestionIndex(questionIdx);
     setMediaIndex(0); 
 
-    const question = examData[sectionIdx].questions[questionIdx];
+    const question = section.questions[questionIdx];
     if (question.mediaType === 'video' || (question.mediaType === 'audio' && question.mediaUrls && question.mediaUrls.length > 0)) {
       setPhase(TestPhase.QUESTION_MEDIA);
     } else {
@@ -568,8 +707,11 @@ const App: React.FC = () => {
     mediaRecorder.onstop = () => {
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
       if (examData) {
-        const qId = examData[currentSectionIndex].questions[currentQuestionIndex].id;
-        setRecordings(prev => ({ ...prev, [qId]: audioBlob }));
+        // Safe access check
+        if (examData[currentSectionIndex] && examData[currentSectionIndex].questions[currentQuestionIndex]) {
+            const qId = examData[currentSectionIndex].questions[currentQuestionIndex].id;
+            setRecordings(prev => ({ ...prev, [qId]: audioBlob }));
+        }
       }
     };
     mediaRecorder.start();
@@ -583,7 +725,16 @@ const App: React.FC = () => {
 
   const handleMediaEnded = () => {
     if (phase === TestPhase.DIRECTION) {
-      startQuestion(currentSectionIndex, 0);
+      if (isAIExam && generatingSection) {
+        // Wait loop if still generating
+        // We will pause here implicitly by not calling startQuestion immediately?
+        // UI should show spinner.
+        // Actually, let's keep polling or just show the waiting UI until generatingSection becomes false.
+        // But handleMediaEnded fires once. 
+        // We need an effect to watch `generatingSection`.
+      } else {
+        startQuestion(currentSectionIndex, 0);
+      }
     } else if (phase === TestPhase.QUESTION_MEDIA) {
       if (currentQuestion && currentQuestion.mediaUrls && mediaIndex < currentQuestion.mediaUrls.length - 1) {
         setMediaIndex(prev => prev + 1);
@@ -592,6 +743,19 @@ const App: React.FC = () => {
       }
     }
   };
+
+  // Effect to proceed after generation is done if waiting at Direction phase
+  useEffect(() => {
+    if (phase === TestPhase.DIRECTION && isAIExam && !generatingSection) {
+        // Video might still be playing, but if video ENDED and we were waiting, we need to know.
+        // Simple approach: Check if video element is paused/ended? 
+        // Or simpler: If the video ends, we enter a "WAITING_FOR_AI" intermediate state if gen is true.
+        // Here, let's just let the video finish. If video finishes and gen is true, we show loader.
+        // If gen finishes, we check if video is done?
+        // Let's modify handleMediaEnded logic slightly via state.
+    }
+  }, [generatingSection, phase, isAIExam]);
+
 
   // --- Render Helpers ---
 
@@ -670,6 +834,7 @@ const App: React.FC = () => {
   const renderResults = () => {
     if (!examData) return null;
     const totalScore = calculateTotalScore();
+    const radarData = getRadarData();
 
     return (
       <div className="flex-1 p-10 bg-gray-50 overflow-y-auto h-screen print:p-0 print:overflow-visible">
@@ -737,18 +902,27 @@ const App: React.FC = () => {
             <h1 className="text-2xl font-semibold text-gray-900 mb-2">{currentTestName}</h1>
             <h2 className="text-3xl font-bold text-gray-800">Test Report</h2>
             
-            {/* Score Card */}
-            <div className="mt-6 inline-block bg-slate-50 border border-slate-200 rounded-xl px-8 py-4">
-               <span className="text-slate-500 text-sm uppercase font-bold tracking-wide">Total Score</span>
-               <div className="text-4xl font-black text-blue-600 mt-1">
-                 {totalScore === null ? (
-                   <span className="text-2xl font-bold text-gray-400">尚未批改</span>
-                 ) : (
-                   <>
-                     {totalScore} <span className="text-lg text-slate-400 font-medium">/ 10</span>
-                   </>
-                 )}
-               </div>
+            <div className="flex flex-col md:flex-row items-center justify-center gap-8 mt-6">
+                {/* Score Card */}
+                <div className="inline-block bg-slate-50 border border-slate-200 rounded-xl px-8 py-4">
+                   <span className="text-slate-500 text-sm uppercase font-bold tracking-wide">Total Score</span>
+                   <div className="text-4xl font-black text-blue-600 mt-1">
+                     {totalScore === null ? (
+                       <span className="text-2xl font-bold text-gray-400">尚未批改</span>
+                     ) : (
+                       <>
+                         {totalScore} <span className="text-lg text-slate-400 font-medium">/ 10</span>
+                       </>
+                     )}
+                   </div>
+                </div>
+
+                {/* Radar Chart */}
+                {totalScore !== null && (
+                    <div className="w-64 h-64 print:block">
+                        <RadarChart data={radarData} size={250} />
+                    </div>
+                )}
             </div>
 
             {/* Action Buttons */}
@@ -778,7 +952,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="space-y-4">
-            {examData.map(section => (
+            {examData.map((section, secIdx) => (
               <div key={section.id} className="border rounded-lg overflow-hidden bg-white shadow-sm print:border-gray-200 print:shadow-none print:mb-4">
                 <div className="bg-gray-100 px-4 py-3 font-medium text-gray-700 border-b flex items-center gap-2 print:bg-gray-50">
                    <BookOpen className="w-4 h-4 text-gray-500"/> 
@@ -798,7 +972,7 @@ const App: React.FC = () => {
                 )}
 
                 <div className="divide-y divide-gray-100">
-                  {section.questions.map(q => {
+                  {section.questions.map((q, qIdx) => {
                     const blob = recordings[q.id];
                     const grade = gradingResults[q.id];
                     const maxScore = SECTION_POINTS[q.id] || 0;
@@ -902,7 +1076,20 @@ const App: React.FC = () => {
                             </h4>
                             <div className="bg-green-50/50 p-3 rounded-md border border-green-100 text-sm text-gray-700 leading-relaxed">
                                {q.answerType === 'audio' ? (
-                                 <audio controls src={q.answerContent} className="w-full h-8" />
+                                 q.answerContent ? (
+                                   <audio controls src={q.answerContent} className="w-full h-8 print:hidden" />
+                                 ) : isAIExam ? (
+                                   <button 
+                                     onClick={() => handleGenerateRefAudio(secIdx, qIdx, q.promptText)}
+                                     disabled={genRefAudioLoading === q.id}
+                                     className="text-xs flex items-center gap-2 px-3 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors print:hidden"
+                                   >
+                                     {genRefAudioLoading === q.id ? <Loader2 className="w-3 h-3 animate-spin"/> : <FileAudio className="w-3 h-3"/>}
+                                     Generate Reference Audio
+                                   </button>
+                                 ) : (
+                                   <span className="text-gray-400 text-xs italic">Audio unavailable</span>
+                                 )
                                ) : (
                                  <p className="whitespace-pre-wrap font-serif">
                                   {cleanHtmlText(q.gradingContext?.refAnswers ? q.gradingContext.refAnswers.join('\nOR\n') : q.answerContent)}
@@ -948,18 +1135,46 @@ const App: React.FC = () => {
       );
     }
 
+    // Direction Phase (Video Playing)
     if (phase === TestPhase.DIRECTION && currentSection.directionVideoUrl) {
       return (
-        <div className="flex-1 flex flex-col h-screen bg-black">
+        <div className="flex-1 flex flex-col h-screen bg-black relative">
           <div className="flex-1 flex items-center justify-center">
             <video 
               src={currentSection.directionVideoUrl}
               autoPlay 
               controls={false}
-              onEnded={handleMediaEnded}
+              onEnded={() => {
+                  // If AI generation is still in progress, we wait here.
+                  // We manually trigger handleMediaEnded only if NOT generating.
+                  if (!generatingSection) {
+                      handleMediaEnded();
+                  } else {
+                      // Just wait. The effect will check `generatingSection` state changes.
+                      // Or enable a poller. But cleaner is to let user wait and auto-transition when gen finishes?
+                      // Easier: User sees "Generating..." overlay.
+                      const checkGen = setInterval(() => {
+                          if (!generatingSection) {
+                              clearInterval(checkGen);
+                              handleMediaEnded();
+                          }
+                      }, 500);
+                  }
+              }}
               className="max-w-full max-h-full aspect-video"
             />
           </div>
+          
+          {/* AI Generation Overlay */}
+          {generatingSection && (
+              <div className="absolute top-0 left-0 w-full h-full bg-black/80 flex flex-col items-center justify-center z-50">
+                  <Wand2 className="w-16 h-16 text-purple-400 animate-bounce mb-4" />
+                  <h3 className="text-2xl font-bold text-white mb-2">AI is Crafting Your Exam...</h3>
+                  <p className="text-purple-200">Generating questions, audio, and reference answers.</p>
+                  <Loader2 className="w-8 h-8 text-purple-500 animate-spin mt-6" />
+              </div>
+          )}
+
           <div className="h-16 bg-slate-900 text-white flex items-center justify-center text-lg font-medium">
             Playing Directions for: {currentSection.title}
           </div>
@@ -1207,7 +1422,19 @@ const App: React.FC = () => {
                    )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {/* AI Simulation Card */}
+                  <button 
+                    onClick={() => setShowAISimModal(true)}
+                    className="col-span-full md:col-span-2 lg:col-span-3 flex flex-col items-center p-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg border-2 border-transparent hover:shadow-xl transition-all group transform hover:-translate-y-1"
+                  >
+                    <div className="w-20 h-20 bg-white/20 text-white rounded-full flex items-center justify-center mb-4 group-hover:bg-white group-hover:text-purple-600 transition-colors backdrop-blur-sm">
+                      <Wand2 className="w-10 h-10" />
+                    </div>
+                    <h3 className="text-2xl font-bold text-white">✨ AI 模拟测验</h3>
+                    <p className="text-purple-100 text-sm mt-2 opacity-90">Auto-generated unique exams powered by Gemini</p>
+                  </button>
+
                   {TEST_SETS.map((test) => (
                     <button 
                       key={test.id}
@@ -1283,6 +1510,84 @@ const App: React.FC = () => {
             </div>
           </div>
          )}
+
+         {/* AI Simulation Config Modal */}
+         {showAISimModal && (
+             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+               <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg">
+                  <h3 className="text-2xl font-bold text-gray-800 mb-2 flex items-center gap-2">
+                    <Wand2 className="w-6 h-6 text-purple-600" />
+                    AI Mock Exam Setup
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-6">Configure the AI models to generate your unique exam paper.</p>
+                  
+                  {/* API Key (Reuse or Input) */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Gemini API Key</label>
+                    <input 
+                      type="password" 
+                      value={apiKey} 
+                      onChange={handleApiKeyChange}
+                      placeholder="Required for generation..."
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none font-mono text-sm"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      {/* Text Model */}
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Text Gen Model</label>
+                        <select 
+                          value={aiSimConfig.textModel}
+                          onChange={(e) => setAiSimConfig({...aiSimConfig, textModel: e.target.value})}
+                          className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                        >
+                          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                          <option value="gemini-3-flash">gemini-3-flash</option>
+                          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        </select>
+                      </div>
+
+                      {/* Audio Model */}
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">TTS Model</label>
+                        <select 
+                          value={aiSimConfig.audioModel}
+                          onChange={(e) => setAiSimConfig({...aiSimConfig, audioModel: e.target.value})}
+                          className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                        >
+                          <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
+                        </select>
+                      </div>
+
+                      {/* Image Model */}
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Image Gen Model</label>
+                        <select 
+                          value={aiSimConfig.imageModel}
+                          onChange={(e) => setAiSimConfig({...aiSimConfig, imageModel: e.target.value})}
+                          className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                        >
+                          <option value="gemini-2.5-flash-image">gemini-2.5-flash-image (Standard)</option>
+                          <option value="gemini-3-pro-image-preview">gemini-3-pro-image-preview (High Quality)</option>
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1">
+                            *Image generation happens only in Section 4 and will ask for confirmation.
+                        </p>
+                      </div>
+                  </div>
+
+                  {apiError && <p className="text-red-500 text-sm mb-4">{apiError}</p>}
+                  
+                  <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                    <button onClick={() => setShowAISimModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                    <button onClick={startAISimulation} className="px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 font-medium shadow-md">
+                        Generate & Start
+                    </button>
+                  </div>
+               </div>
+             </div>
+         )}
        </div>
      )
   }
@@ -1301,13 +1606,19 @@ const App: React.FC = () => {
            <div className="max-w-2xl w-full text-center space-y-8">
               <div className="inline-flex items-center px-4 py-2 rounded-full bg-green-100 text-green-700 font-medium text-sm">
                 <CheckCircle className="w-4 h-4 mr-2" />
-                Exam Data Loaded
+                {isAIExam ? "AI Exam Structure Ready" : "Exam Data Loaded"}
               </div>
               <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">High School English Speaking Test</h1>
               <p className="text-lg text-slate-600">
                 This simulation consists of {examData.length} parts. It includes reading, listening, and speaking tasks. 
               </p>
               
+              {isAIExam && (
+                  <div className="bg-purple-50 border border-purple-100 p-4 rounded-lg text-left text-sm text-purple-800">
+                      <strong>AI Mode Active:</strong> Questions will be generated in real-time as you progress through the exam. Please ensure a stable internet connection.
+                  </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4 text-left">
                 {examData.map((s, i) => (
                   <div key={s.id} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
@@ -1319,7 +1630,10 @@ const App: React.FC = () => {
 
               <div className="pt-8 flex justify-center gap-4">
                 <button 
-                  onClick={() => setExamData(null)}
+                  onClick={() => {
+                      setExamData(null);
+                      setIsAIExam(false);
+                  }}
                   className="px-6 py-4 text-slate-500 font-medium hover:text-slate-700 transition-colors"
                 >
                   Back
