@@ -75,13 +75,18 @@ export const loadExamData = async (testFolder: string): Promise<Section[]> => {
   // --- Section 4: 图片描述 ---
   // Answer processing: remove html tags
   let s4Ans = '';
+  let s4Analyze = '';
   try {
     const res = await fetch(`${root}/5/content2.json`);
     if (res.ok) {
       const json = await res.json();
       const rawStd = json.info.std || [];
       const joined = rawStd.map((i: any) => i.value).join('\n');
-      s4Ans = joined.replace(/<p>|<\/p>|<br\/>/g, '');
+      s4Ans = joined.replace(/<p>|<\/p>|<br\s*\/?>/gi, '');
+
+      // Parse info.analyze for the prompt text
+      const rawAnalyze = json.info.analyze || '';
+      s4Analyze = rawAnalyze.replace(/<p>|<\/p>|<br\s*\/?>/gi, '').trim();
     }
   } catch(e) { console.error(e); }
 
@@ -220,7 +225,8 @@ export const loadExamData = async (testFolder: string): Promise<Section[]> => {
           mediaType: 'image', 
           prepDuration: 60, answerDuration: 60, 
           mediaUrls: [`${root}/5/material/content.jpg`],
-          answerType: 'text', answerContent: s4Ans
+          answerType: 'text', answerContent: s4Ans,
+          gradingContext: { startSentence: s4Analyze }
         },
       ],
     },

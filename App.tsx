@@ -230,6 +230,8 @@ const App: React.FC = () => {
       // --- SECTION 4: PICTURE DESCRIPTION ---
       else if (sectionId === 'sec_4') {
         const imageUrl = question.mediaUrls[0];
+        const startSentence = gradingContext.startSentence || "";
+        
         if (imageUrl) {
           const imageBase64 = await urlToBase64(imageUrl);
           parts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
@@ -239,7 +241,7 @@ const App: React.FC = () => {
           Task: Picture Description.
           
           Requirements:
-          1. Start with the sentence: "${promptText}" (The student must say this or connect to it).
+          1. Start with the sentence: "${startSentence}". (Student MUST include this or link to it).
           2. Describe ALL 4 panels of the comic strip provided in the image. Cover: Time, Place, Main Characters, Event Development.
           3. Tense: Check for accurate use of tenses (usually past tense for narrative).
           4. Grammar & Expression: Meaning must be clear and accurate.
@@ -279,7 +281,7 @@ const App: React.FC = () => {
           Task: Summary & Q&A.
           Original Article: "${originalText}"
           Question: "${promptText}"
-          Keywords (Reference Only): [${keywords}]
+          Keywords (Reference): [${keywords}]
           
           Specific Criteria for Question ${isQ1 ? '1' : '2'}:
           ${isQ1 
@@ -351,6 +353,9 @@ const App: React.FC = () => {
   };
 
   const calculateTotalScore = () => {
+    // If no results, return null or indicator
+    if (Object.keys(gradingResults).length === 0) return null;
+
     let total = 0;
     Object.keys(gradingResults).forEach(qId => {
        const result = gradingResults[qId];
@@ -390,41 +395,29 @@ const App: React.FC = () => {
       });
 
       const assetsArray = Array.from(assets);
+      const preloadCandidates: string[] = [];
       
-      // Filter candidates for preloading (Head request to check size/type)
-      const preloadCandidates: {url: string, size: number}[] = [];
-      let totalBytes = 0;
-
-      for (const url of assetsArray) {
-        try {
-          const res = await fetch(url, { method: 'HEAD' });
-          const type = res.headers.get('Content-Type') || '';
-          const len = Number(res.headers.get('Content-Length') || 0);
-
-          // Rule: Skip videos, Skip > 2MB
-          if (!type.startsWith('video/') && len < 2 * 1024 * 1024) {
-             preloadCandidates.push({ url, size: len });
-             totalBytes += len;
+      // Filter out videos mostly, as they are large and streamed usually
+      assetsArray.forEach(url => {
+          const ext = url.split('.').pop()?.toLowerCase();
+          if (ext !== 'mp4' && ext !== 'webm' && ext !== 'mov') {
+              preloadCandidates.push(url);
           }
-        } catch (e) {
-          console.warn("Head check failed", url);
-        }
-      }
+      });
 
-      // Download
-      let loadedBytes = 0;
-      const totalMB = Math.round(totalBytes / 1024 / 1024 * 100) / 100;
-      
-      if (preloadCandidates.length > 0) {
-        for (const candidate of preloadCandidates) {
+      const totalFiles = preloadCandidates.length;
+      let loadedCount = 0;
+
+      if (totalFiles > 0) {
+        for (const url of preloadCandidates) {
             setPreloadStatus({ 
-              current: Math.round(loadedBytes / 1024 / 1024 * 100) / 100, 
-              total: totalMB,
-              file: candidate.url.split('/').pop() || 'file'
+              current: loadedCount + 1, 
+              total: totalFiles,
+              file: url.split('/').pop() || 'file'
             });
 
-            await fetch(candidate.url); // Browser cache warm-up
-            loadedBytes += candidate.size;
+            await fetch(url).catch(e => console.warn("Preload failed for", url));
+            loadedCount++;
         }
       }
 
@@ -747,7 +740,15 @@ const App: React.FC = () => {
             {/* Score Card */}
             <div className="mt-6 inline-block bg-slate-50 border border-slate-200 rounded-xl px-8 py-4">
                <span className="text-slate-500 text-sm uppercase font-bold tracking-wide">Total Score</span>
-               <div className="text-4xl font-black text-blue-600 mt-1">{totalScore} <span className="text-lg text-slate-400 font-medium">/ 10</span></div>
+               <div className="text-4xl font-black text-blue-600 mt-1">
+                 {totalScore === null ? (
+                   <span className="text-2xl font-bold text-gray-400">尚未批改</span>
+                 ) : (
+                   <>
+                     {totalScore} <span className="text-lg text-slate-400 font-medium">/ 10</span>
+                   </>
+                 )}
+               </div>
             </div>
 
             {/* Action Buttons */}
@@ -821,6 +822,12 @@ const App: React.FC = () => {
                                       <ImageIcon className="w-3 h-3" /> Question Image
                                     </div>
                                     <img src={q.mediaUrls[0]} alt="Question" className="rounded-lg border border-gray-200 shadow-sm" />
+                                    {/* SECTION 4: TEXT PROMPT BELOW IMAGE */}
+                                    {q.gradingContext?.startSentence && (
+                                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-100 rounded text-sm text-slate-700">
+                                        <span className="font-bold mr-1">提示:</span>{q.gradingContext.startSentence}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
@@ -865,7 +872,7 @@ const App: React.FC = () => {
                          </div>
 
                          {/* AI Result Section */}
-                         {grade && !grade.loading && (
+                         {grade && !grade.loading ? (
                            <div className="mb-4 bg-purple-50 border border-purple-100 rounded-lg p-4 print:bg-white print:border-purple-200">
                               <div className="flex items-start gap-3">
                                 <div className="p-2 bg-white rounded-full shadow-sm print:hidden">
@@ -882,9 +889,14 @@ const App: React.FC = () => {
                                 </div>
                               </div>
                            </div>
-                         )}
+                         ) : blob ? (
+                           <div className="mb-4 text-right">
+                              <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">得分：尚未批改</span>
+                           </div>
+                         ) : null}
 
-                         <div className="mt-4 pt-4 border-t border-dashed border-gray-200 print:hidden">
+                         {/* Reference Answer - REMOVED print:hidden */}
+                         <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
                             <h4 className="text-xs font-bold text-green-600 uppercase mb-2 flex items-center gap-1">
                                <CheckCircle className="w-3 h-3" /> Reference Answer
                             </h4>
@@ -994,24 +1006,34 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col items-center justify-center">
           <div className="w-full max-w-5xl bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden min-h-[400px] flex flex-col">
             {hasVisualMedia && (
-              <div className="flex-1 bg-black/5 flex items-center justify-center relative min-h-[400px] p-4">
-                {currentQuestion.mediaType === 'image' && currentMediaUrl && (
-                  <img 
-                    src={currentMediaUrl} 
-                    alt="Question Prompt" 
-                    className="w-full h-full max-h-[80vh] object-contain" 
-                  />
-                )}
-                {(currentQuestion.mediaType === 'video') && currentMediaUrl && (
-                  <video 
-                    key={`vid-${currentQuestion.id}-${mediaIndex}`} 
-                    src={currentMediaUrl}
-                    autoPlay={showMedia}
-                    controls={false}
-                    onEnded={handleMediaEnded}
-                    muted={!showMedia}
-                    className="w-full h-full max-h-[80vh] object-contain"
-                  />
+              <div className="flex-1 bg-black/5 flex flex-col relative min-h-[400px]">
+                <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+                  {currentQuestion.mediaType === 'image' && currentMediaUrl && (
+                    <img 
+                      src={currentMediaUrl} 
+                      alt="Question Prompt" 
+                      className="w-full h-full max-h-[70vh] object-contain" 
+                    />
+                  )}
+                  {(currentQuestion.mediaType === 'video') && currentMediaUrl && (
+                    <video 
+                      key={`vid-${currentQuestion.id}-${mediaIndex}`} 
+                      src={currentMediaUrl}
+                      autoPlay={showMedia}
+                      controls={false}
+                      onEnded={handleMediaEnded}
+                      muted={!showMedia}
+                      className="w-full h-full max-h-[80vh] object-contain"
+                    />
+                  )}
+                </div>
+                {/* Section 4 Specific Text Prompt Display */}
+                {currentQuestion.gradingContext?.startSentence && (
+                  <div className="bg-white p-6 border-t border-gray-200 text-center shrink-0">
+                    <p className="text-xl font-medium text-slate-800">
+                      {currentQuestion.gradingContext.startSentence}
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -1179,7 +1201,7 @@ const App: React.FC = () => {
                        </div>
                        <div className="flex justify-between text-xs text-slate-400 mt-2 font-mono">
                          <span>{preloadStatus.file}</span>
-                         <span>{preloadStatus.current} / {preloadStatus.total} MB</span>
+                         <span>{preloadStatus.current} / {preloadStatus.total} Files</span>
                        </div>
                      </div>
                    )}
@@ -1219,7 +1241,7 @@ const App: React.FC = () => {
                    type="password" 
                    value={apiKey} 
                    onChange={handleApiKeyChange}
-                   placeholder="AIza..."
+                   placeholder="sk-..."
                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
                  />
                  <a 

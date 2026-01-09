@@ -6,6 +6,7 @@ export interface GradingContext {
   keywords?: string[]; // For Section 6
   actualQuestion?: string; // For Section 5 (Hidden prompt)
   refAnswers?: string[]; // For Section 3 (All valid answers)
+  startSentence?: string; // For Section 4 (Picture description start sentence)
 }
 
 export interface Question {
